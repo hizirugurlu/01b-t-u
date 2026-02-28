@@ -2,49 +2,83 @@ import flet as ft
 import asyncio
 import json
 import websockets
+import os
 
-async def borsa_takip(page: ft.Page):
-    page.title = "Mühendislik Portalı - Borsa v1.0"
+# TEKNİK ANALİZ: 
+# 1. Port Çakışması: Render dinamik port atadığı için os.getenv("PORT") eklendi.
+# 2. Host Erişimi: Dış dünyaya açılması için host="0.0.0.0" olarak set edildi.
+# 3. Performans: WebSocket 100ms asenkron döngüde bloklanmadan çalışır.
+
+async def main(page: ft.Page):
+    # iPhone 13 Tasarım Ayarları
+    page.title = "01-B-T-U v1.0"
     page.theme_mode = ft.ThemeMode.DARK
-    page.vertical_alignment = ft.MainAxisAlignment.START
-    
-    # iPhone 13 çentik ve alt bar güvenli alan ayarı
-    page.padding = ft.padding.only(top=50, left=10, right=10, bottom=20)
+    page.padding = ft.padding.only(top=50, left=15, right=15, bottom=30)
+    page.bgcolor = "#000000"  # OLED Ekran için tam siyah
 
-    fiyat_text = ft.Text("Yükleniyor...", size=40, weight="bold", color="yellow")
-    derinlik_listesi = ft.ListView(expand=1, spacing=5)
+    # UI Bileşenleri
+    fiyat_gostergesi = ft.Text("$0.00", size=45, weight="bold", color="green")
+    degisim_yuzdesi = ft.Text("BTC/USDT CANLI", size=18, color="white70")
+    derinlik_paneli = ft.Column(spacing=2, scroll=ft.ScrollMode.HIDDEN)
 
+    # Arayüz Yapısı
     page.add(
-        ft.Text("BTC/USDT CANLI VERİ", size=14, color="grey"),
-        fiyat_text,
-        ft.Divider(),
-        ft.Text("10 KADEMELİ DERİNLİK (ASK/BID)", weight="bold"),
-        derinlik_listesi
+        ft.Container(
+            content=ft.Column([
+                ft.Text("MÜHENDİS ANALİZ TERMİNALİ", size=12, color="blueaccent", weight="w500"),
+                fiyat_gostergesi,
+                degisim_yuzdesi,
+            ]),
+            margin=ft.margin.only(bottom=20)
+        ),
+        ft.Divider(height=1, color="white10"),
+        ft.Text("10 KADEMELİ DERİNLİK (L2 DATA)", size=14, weight="bold", color="white"),
+        ft.Container(content=derinlik_paneli, expand=True)
     )
 
-    # WebSocket üzerinden anlık veri çekme fonksiyonu
     async def veri_akisi():
-        url = "wss://stream.binance.com:9443/ws/btcusdt@depth10@100ms"
-        async with websockets.connect(url) as ws:
-            while True:
-                msg = await ws.recv()
-                data = json.loads(msg)
-                
-                # Fiyatı ilk Ask (Satış) kademesinden alıyoruz
-                fiyat_text.value = f"${float(data['asks'][0][0]):,.2f}"
-                
-                # Derinlik Listesini Güncelle
-                derinlik_listesi.controls.clear()
-                for i in range(5): # İlk 5 kademe
-                    derinlik_listesi.controls.append(
-                        ft.Row([
-                            ft.Text(f"S: {data['asks'][i][0]}", color="red"),
-                            ft.Text(f"A: {data['bids'][i][0]}", color="green"),
-                        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
-                    )
-                page.update()
+        uri = "wss://stream.binance.com:9443/ws/btcusdt@depth10@100ms"
+        while True:
+            try:
+                async with websockets.connect(uri) as websocket:
+                    while True:
+                        raw_data = await websocket.recv()
+                        data = json.loads(raw_data)
+                        
+                        # Anlık Fiyat
+                        mevcut_fiyat = float(data['asks'][0][0])
+                        fiyat_gostergesi.value = f"${mevcut_fiyat:,.2f}"
+                        
+                        # Derinlik Listesi Güncelleme
+                        derinlik_paneli.controls.clear()
+                        
+                        # Satışlar (Asks)
+                        for ask in data['asks'][:5][::-1]:
+                            derinlik_paneli.controls.append(
+                                ft.Row([
+                                    ft.Text(f"{ask[0]}", color="red400", size=13),
+                                    ft.Text(f"{float(ask[1]):.4f}", color="white30", size=12)
+                                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+                            )
 
-    # Arka planda sürekli çalışması için task başlat
+                        # Alışlar (Bids)
+                        for bid in data['bids'][:5]:
+                            derinlik_paneli.controls.append(
+                                ft.Row([
+                                    ft.Text(f"{bid[0]}", color="green400", size=13),
+                                    ft.Text(f"{float(bid[1]):.4f}", color="white30", size=12)
+                                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+                            )
+                        
+                        page.update()
+            except Exception as e:
+                print(f"Bağlantı Hatası: {e}. 5 saniye içinde yeniden denenecek...")
+                await asyncio.sleep(5)
+
+    # Veri çekme görevini başlat
     asyncio.create_task(veri_akisi())
 
-ft.app(target=borsa_takip, view=ft.AppView.WEB_BROWSER)
+if __name__ == "__main__":
+    # Render için kritik port ve host konfigürasyonu
+    port = int(os.getenv("PORT", 8080))
+    ft.app(target=main, view=ft.AppView.WEB_BROWSER, host="0.0.0.0", port=port)
